@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Acro Local Server</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ─── Header ─────────────────────────────── */
+    .header {
+      padding: 20px 24px 16px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e94560;
+      margin-bottom: 12px;
+    }
+
+    /* ─── Server info card ────────────────────── */
+    .server-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: #0f3460;
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #4ecca3;
+      box-shadow: 0 0 8px #4ecca390;
+      flex-shrink: 0;
+    }
+
+    .server-details {
+      flex: 1;
+    }
+
+    .server-url {
+      font-size: 15px;
+      font-weight: 600;
+      color: #ffffff;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      letter-spacing: 0.3px;
+    }
+
+    .server-meta {
+      font-size: 12px;
+      color: #8a8a9a;
+      margin-top: 2px;
+    }
+
+    .devices-badge {
+      font-size: 12px;
+      font-weight: 600;
+      color: #4ecca3;
+      background: #4ecca320;
+      border: 1px solid #4ecca340;
+      padding: 4px 12px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      background: #e94560;
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .copy-btn:hover { background: #c73550; }
+    .copy-btn:active { transform: scale(0.96); }
+
+    /* ─── Files section ───────────────────────── */
+    .files-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 16px 24px;
+    }
+
+    .files-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .files-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #8a8a9a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .file-count {
+      font-size: 12px;
+      color: #4ecca3;
+      background: #4ecca320;
+      padding: 2px 10px;
+      border-radius: 10px;
+    }
+
+    /* ─── File list ────────────────────────────── */
+    .file-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .file-list::-webkit-scrollbar { width: 4px; }
+    .file-list::-webkit-scrollbar-track { background: transparent; }
+    .file-list::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 2px; }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      gap: 8px;
+    }
+
+    .empty-state .icon { font-size: 36px; opacity: 0.4; }
+    .empty-state p { font-size: 13px; }
+
+    /* ─── File card ────────────────────────────── */
+    .file-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+
+    .file-icon {
+      width: 36px;
+      height: 36px;
+      background: #e9456020;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .file-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .file-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: #e0e0e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-meta {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .file-timer {
+      color: #e94560;
+      font-weight: 500;
+    }
+
+    .delete-btn {
+      background: none;
+      border: 1px solid #333;
+      color: #888;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+
+    .delete-btn:hover {
+      border-color: #e94560;
+      color: #e94560;
+      background: #e9456015;
+    }
+
+    /* ─── Footer ──────────────────────────────── */
+    .footer {
+      padding: 10px 24px;
+      background: #16213e;
+      border-top: 1px solid #0f3460;
+      font-size: 11px;
+      color: #555;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Acro Local Server</h1>
+    <div class="server-info">
+      <div class="status-dot"></div>
+      <div class="server-details">
+        <div class="server-url" id="serverUrl">Starting...</div>
+        <div class="server-meta" id="serverMeta">Initializing server</div>
+      </div>
+      <span class="devices-badge" id="devicesBadge">0 devices</span>
+      <button class="copy-btn" id="copyBtn" onclick="copyUrl()">Copy URL</button>
+    </div>
+  </div>
+
+  <div class="files-section">
+    <div class="files-header">
+      <h2>Uploaded Videos</h2>
+      <span class="file-count" id="fileCount">0 files</span>
+    </div>
+    <div class="file-list" id="fileList">
+      <div class="empty-state">
+        <div class="icon">🎬</div>
+        <p>No videos uploaded yet</p>
+        <p>Videos from Acro Companion will appear here</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer" id="footer">
+    Videos are kept until manually deleted
+  </div>
+
+  <script>
+    let serverInfo = null;
+
+    // ─── Initialize ──────────────────────────────
+    async function init() {
+      serverInfo = await window.api.getServerInfo();
+      const url = `http://${serverInfo.ip}:${serverInfo.port}`;
+
+      document.getElementById('serverUrl').textContent = url;
+      document.getElementById('serverMeta').textContent =
+        `Listening on port ${serverInfo.port}`;
+      document.getElementById('footer').textContent =
+        `Videos are kept until manually deleted · Storage: ${serverInfo.videosDir}`;
+
+      // Load existing files
+      const files = await window.api.getFileList();
+      renderFiles(files);
+    }
+
+    // ─── Listen for real-time updates ────────────
+    window.api.onFileListUpdated((files) => {
+      renderFiles(files);
+    });
+
+    window.api.onWsClientCount((count) => {
+      const el = document.getElementById('devicesBadge');
+      el.textContent = `${count} device${count !== 1 ? 's' : ''} connected`;
+    });
+
+    // ─── Render file list ────────────────────────
+    function renderFiles(files) {
+      const container = document.getElementById('fileList');
+      const countEl = document.getElementById('fileCount');
+
+      countEl.textContent = `${files.length} file${files.length !== 1 ? 's' : ''}`;
+
+      if (files.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">🎬</div>
+            <p>No videos uploaded yet</p>
+            <p>Videos from Acro Companion will appear here</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = files.map(file => {
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        const uploadedAt = new Date(file.uploadedAt).toLocaleTimeString();
+
+        return `
+          <div class="file-card">
+            <div class="file-icon">🎥</div>
+            <div class="file-info">
+              <div class="file-name">${file.originalName}</div>
+              <div class="file-meta">
+                <span>${sizeMB} MB</span>
+                <span>Uploaded at ${uploadedAt}</span>
+              </div>
+            </div>
+            <button class="delete-btn" onclick="deleteFile('${file.filename}')" title="Delete now">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ─── Copy URL to clipboard ───────────────────
+    function copyUrl() {
+      const url = document.getElementById('serverUrl').textContent;
+      navigator.clipboard.writeText(url);
+      const btn = document.getElementById('copyBtn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy URL'; }, 1500);
+    }
+
+    // ─── Delete file ─────────────────────────────
+    async function deleteFile(filename) {
+      await window.api.deleteFile(filename);
+    }
+
+    // ─── Refresh timers every minute ─────────────
+    setInterval(async () => {
+      const files = await window.api.getFileList();
+      renderFiles(files);
+    }, 30000);
+
+    init();
+  </script>
+</body>
+</html>

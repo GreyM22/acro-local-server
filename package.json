@@ -1,0 +1,42 @@
+{
+  "name": "acro-local-server",
+  "version": "1.0.0",
+  "description": "Local video server for Acro Companion competitions",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "release:mac": "electron-builder --mac --publish always",
+    "release:win": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.acrocompanion.localserver",
+    "productName": "Acro Local Server",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "greimuka",
+      "repo": "acro-local-server"
+    }
+  }
+}
