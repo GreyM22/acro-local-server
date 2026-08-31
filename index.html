@@ -280,7 +280,7 @@
       document.getElementById('serverMeta').textContent =
         `Listening on port ${serverInfo.port}`;
       document.getElementById('footer').textContent =
-        `Videos are kept until manually deleted · Storage: ${serverInfo.videosDir}`;
+        `v${serverInfo.version} · Videos are kept until manually deleted · Storage: ${serverInfo.videosDir}`;
 
       // Load existing files
       const files = await window.api.getFileList();
