@@ -22,6 +22,35 @@ const uploadedFiles = new Map(); // filename -> { originalName, uploadedAt, size
 let mainWindow = null;
 const wsClients = new Set();
 
+// ─── Rehydrate file list from disk ─────────────────────────
+const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm', '.avi'];
+
+function hydrateFromDisk() {
+  try {
+    const entries = fs.readdirSync(videosDir);
+    let count = 0;
+    for (const filename of entries) {
+      if (filename.startsWith('.')) continue;
+      if (!VIDEO_EXTENSIONS.includes(path.extname(filename).toLowerCase())) continue;
+      if (uploadedFiles.has(filename)) continue;
+
+      const filePath = path.join(videosDir, filename);
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) continue;
+
+      uploadedFiles.set(filename, {
+        originalName: filename,
+        uploadedAt: stat.mtimeMs,
+        size: stat.size,
+      });
+      count++;
+    }
+    console.log(`Hydrated ${count} existing video(s) from disk`);
+  } catch (err) {
+    console.error('Failed to hydrate files from disk:', err.message);
+  }
+}
+
 // ─── Get local network IP ──────────────────────────────────
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -233,6 +262,7 @@ ipcMain.handle('get-server-info', () => {
     ip: getLocalIP(),
     port: SERVER_PORT,
     videosDir,
+    version: app.getVersion(),
   };
 });
 
@@ -261,6 +291,9 @@ ipcMain.handle('delete-file', (event, filename) => {
 
 // ─── App lifecycle ──────────────────────────────────────────
 app.whenReady().then(() => {
+  console.log(`Acro Local Server v${app.getVersion()} — videos dir: ${videosDir}`);
+  hydrateFromDisk();
+
   const expressApp = createServer();
   const httpServer = http.createServer(expressApp);
 
