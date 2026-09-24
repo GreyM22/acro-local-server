@@ -6,6 +6,7 @@ const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 
 // ─── Config ────────────────────────────────────────────────
@@ -18,37 +19,142 @@ if (!fs.existsSync(videosDir)) {
 }
 
 // ─── Track uploaded files ──────────────────────────────────
-const uploadedFiles = new Map(); // filename -> { originalName, uploadedAt, size }
+// id (exerciseId) -> { name, uploadedAt, size }. `name` is the readable filename on disk.
+const uploadedFiles = new Map();
 let mainWindow = null;
 const wsClients = new Set();
 
-// ─── Rehydrate file list from disk ─────────────────────────
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm', '.avi'];
+const MIME_EXTENSIONS = {
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'video/webm': '.webm',
+  'video/x-msvideo': '.avi',
+};
 
+// ─── Metadata sidecar (id -> name, uploadedAt) ─────────────
+const METADATA_FILE = path.join(videosDir, '.metadata.json');
+
+function loadMetadata() {
+  try {
+    const data = JSON.parse(fs.readFileSync(METADATA_FILE, 'utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.warn('Ignoring unreadable metadata file:', err.message);
+    return {};
+  }
+}
+
+function saveMetadata() {
+  const data = {};
+  for (const [id, info] of uploadedFiles) {
+    data[id] = { name: info.name, uploadedAt: info.uploadedAt };
+  }
+  try {
+    const tmp = `${METADATA_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, METADATA_FILE);
+  } catch (err) {
+    console.error('Failed to save metadata:', err.message);
+  }
+}
+
+// ─── Rehydrate file list from disk ─────────────────────────
 function hydrateFromDisk() {
   try {
-    const entries = fs.readdirSync(videosDir);
-    let count = 0;
-    for (const filename of entries) {
+    const meta = loadMetadata();
+    const referenced = new Set();
+    let changed = false;
+
+    for (const [id, entry] of Object.entries(meta)) {
+      const name = entry && typeof entry.name === 'string' ? entry.name : null;
+      if (!name || name !== path.basename(name)) { changed = true; continue; }
+      try {
+        const stat = fs.statSync(path.join(videosDir, name));
+        if (!stat.isFile()) throw new Error('not a file');
+        uploadedFiles.set(id, {
+          name,
+          uploadedAt: Number(entry.uploadedAt) || stat.mtimeMs,
+          size: stat.size,
+        });
+        referenced.add(name.toLowerCase());
+      } catch {
+        changed = true; // file was removed while the app was off
+      }
+    }
+
+    for (const filename of fs.readdirSync(videosDir)) {
+      if (filename.startsWith('.upload-')) {
+        try { fs.unlinkSync(path.join(videosDir, filename)); } catch {}
+        continue;
+      }
       if (filename.startsWith('.')) continue;
       if (!VIDEO_EXTENSIONS.includes(path.extname(filename).toLowerCase())) continue;
-      if (uploadedFiles.has(filename)) continue;
+      if (referenced.has(filename.toLowerCase()) || uploadedFiles.has(filename)) continue;
 
-      const filePath = path.join(videosDir, filename);
-      const stat = fs.statSync(filePath);
+      const stat = fs.statSync(path.join(videosDir, filename));
       if (!stat.isFile()) continue;
 
-      uploadedFiles.set(filename, {
-        originalName: filename,
-        uploadedAt: stat.mtimeMs,
-        size: stat.size,
-      });
-      count++;
+      // Legacy / renamed-while-off file: its filename doubles as its id
+      uploadedFiles.set(filename, { name: filename, uploadedAt: stat.mtimeMs, size: stat.size });
+      changed = true;
     }
-    console.log(`Hydrated ${count} existing video(s) from disk`);
+
+    if (changed) saveMetadata();
+    console.log(`Hydrated ${uploadedFiles.size} existing video(s) from disk`);
   } catch (err) {
     console.error('Failed to hydrate files from disk:', err.message);
   }
+}
+
+// ─── Filename helpers ──────────────────────────────────────
+function sanitizeBaseName(value, ext) {
+  let s = String(value ?? '');
+  if (ext && s.toLowerCase().endsWith(ext)) s = s.slice(0, -ext.length);
+  s = s
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .slice(0, 100)
+    .replace(/[.\s]+$/g, '');
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(s)) s = `_${s}`;
+  return s;
+}
+
+function isFilenameTaken(candidate, id) {
+  const lower = candidate.toLowerCase();
+  for (const [otherId, info] of uploadedFiles) {
+    if (otherId !== id && info.name.toLowerCase() === lower) return true;
+  }
+  const own = uploadedFiles.get(id);
+  if (own && own.name.toLowerCase() === lower) return false;
+  return fs.existsSync(path.join(videosDir, candidate));
+}
+
+// Readable, filesystem-safe filename that no other id owns: "Name.mp4", "Name (2).mp4", ...
+function uniqueFilename(id, name, ext) {
+  const base = sanitizeBaseName(name, ext) || sanitizeBaseName(id, ext) || 'video';
+  let candidate = `${base}${ext}`;
+  for (let n = 2; isFilenameTaken(candidate, id); n++) {
+    candidate = `${base} (${n})${ext}`;
+  }
+  return candidate;
+}
+
+function pickExtension(file) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  return VIDEO_EXTENSIONS.includes(ext) ? ext : (MIME_EXTENSIONS[file.mimetype] || '.mp4');
+}
+
+// ─── Delete a video by id ──────────────────────────────────
+function deleteById(id) {
+  const info = uploadedFiles.get(id);
+  if (!info) return false;
+  const filePath = path.join(videosDir, info.name);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  uploadedFiles.delete(id);
+  saveMetadata();
+  sendFileList();
+  return true;
 }
 
 // ─── Get local network IP ──────────────────────────────────
@@ -66,15 +172,18 @@ function getLocalIP() {
 }
 
 // ─── Notify renderer of file list changes ──────────────────
-function sendFileList() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const files = Array.from(uploadedFiles.entries()).map(([filename, info]) => ({
-    filename,
-    originalName: info.originalName,
+function getFileList() {
+  return Array.from(uploadedFiles.entries()).map(([id, info]) => ({
+    id,
+    name: info.name,
     uploadedAt: info.uploadedAt,
     size: info.size,
   }));
-  mainWindow.webContents.send('file-list-updated', files);
+}
+
+function sendFileList() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('file-list-updated', getFileList());
 }
 
 // ─── Notify renderer of WebSocket client count ─────────────
@@ -101,11 +210,12 @@ function createServer() {
   server.use(cors());
   server.use(express.json());
 
-  // Multer config for file uploads
+  // Multer saves to a temp name; the handler moves it to its readable name,
+  // so the order of multipart fields (id, name, video) does not matter.
   const storage = multer.diskStorage({
     destination: videosDir,
     filename: (req, file, cb) => {
-      cb(null, file.originalname);
+      cb(null, `.upload-${crypto.randomBytes(6).toString('hex')}`);
     },
   });
 
@@ -122,6 +232,8 @@ function createServer() {
     },
   });
 
+  const videoUrl = (id) => `http://${getLocalIP()}:${SERVER_PORT}/videos/${encodeURIComponent(id)}`;
+
   // ─── Routes ───────────────────────────────────────────────
 
   // Health check
@@ -129,94 +241,83 @@ function createServer() {
     res.json({ status: 'ok', files: uploadedFiles.size });
   });
 
-  // Upload a video
-  server.post('/upload', upload.single('video'), (req, res) => {
+  // Upload a video. id comes from the path (/upload/:id) or the `id` form field;
+  // `name` (form field) is the readable filename. Same id again overwrites.
+  function handleUpload(req, res) {
     if (!req.file) {
       return res.status(400).json({ error: 'No video file provided' });
     }
+    const tempPath = req.file.path;
 
-    const localIP = getLocalIP();
-    const filename = req.file.filename;
+    try {
+      const explicitId = req.params.id || req.body.id;
+      const id = String(explicitId || req.file.originalname).trim().slice(0, 200);
+      if (!id) {
+        fs.unlinkSync(tempPath);
+        return res.status(400).json({ error: 'id must be a non-empty string' });
+      }
 
-    uploadedFiles.set(filename, {
-      originalName: req.file.originalname,
-      uploadedAt: Date.now(),
-      size: req.file.size,
-    });
+      const requestedName = typeof req.body.name === 'string' && req.body.name.trim()
+        ? req.body.name
+        : (explicitId ? id : req.file.originalname);
+      const name = uniqueFilename(id, requestedName, pickExtension(req.file));
 
-    sendFileList();
+      const existing = uploadedFiles.get(id);
+      fs.renameSync(tempPath, path.join(videosDir, name));
+      if (existing && existing.name.toLowerCase() !== name.toLowerCase()) {
+        try { fs.unlinkSync(path.join(videosDir, existing.name)); } catch {}
+      }
 
-    const videoUrl = `http://${localIP}:${SERVER_PORT}/videos/${filename}`;
-    console.log(`Uploaded: ${filename} → ${videoUrl}`);
+      uploadedFiles.set(id, { name, uploadedAt: Date.now(), size: req.file.size });
+      saveMetadata();
+      sendFileList();
 
-    res.json({
-      url: videoUrl,
-      filename,
-    });
-  });
+      const url = videoUrl(id);
+      console.log(`Uploaded ${id}: ${name} → ${url}`);
 
-  // Upload with a specific exercise ID (alternative endpoint)
-  server.post('/upload/:exerciseId', upload.single('video'), (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No video file provided' });
+      // `filename` / `exerciseId` kept for older clients
+      res.json({ id, name, url, filename: name, exerciseId: id });
+    } catch (err) {
+      try { fs.unlinkSync(tempPath); } catch {}
+      console.error('Upload failed:', err.message);
+      res.status(500).json({ error: err.message });
     }
+  }
 
-    const localIP = getLocalIP();
-    const filename = req.file.filename;
+  server.post('/upload', upload.single('video'), handleUpload);
+  server.post('/upload/:id', upload.single('video'), handleUpload);
 
-    uploadedFiles.set(filename, {
-      originalName: req.file.originalname,
-      exerciseId: req.params.exerciseId,
-      uploadedAt: Date.now(),
-      size: req.file.size,
-    });
-
-    sendFileList();
-
-    const videoUrl = `http://${localIP}:${SERVER_PORT}/videos/${filename}`;
-    console.log(`Uploaded exercise ${req.params.exerciseId}: ${filename} → ${videoUrl}`);
-
-    res.json({
-      url: videoUrl,
-      filename,
-      exerciseId: req.params.exerciseId,
+  // Serve a video by id (Range/streaming supported); falls through to static for legacy filenames
+  server.get('/videos/:id', (req, res, next) => {
+    // Accept "/videos/<id>" and "/videos/<id>.mp4" (players/clients often append an extension)
+    let info = uploadedFiles.get(req.params.id);
+    if (!info) {
+      const ext = path.extname(req.params.id).toLowerCase();
+      if (VIDEO_EXTENSIONS.includes(ext)) info = uploadedFiles.get(req.params.id.slice(0, -ext.length));
+    }
+    if (!info) return next();
+    res.sendFile(path.join(videosDir, info.name), (err) => {
+      if (err && !res.headersSent) next(err);
     });
   });
-
-  // Serve video files
   server.use('/videos', express.static(videosDir));
 
   // List all available videos
   server.get('/list', (req, res) => {
-    const localIP = getLocalIP();
-    const files = Array.from(uploadedFiles.entries()).map(([filename, info]) => ({
-      filename,
-      originalName: info.originalName,
-      exerciseId: info.exerciseId || null,
-      url: `http://${localIP}:${SERVER_PORT}/videos/${filename}`,
-      uploadedAt: info.uploadedAt,
-    }));
-    res.json(files);
+    res.json(getFileList().map((file) => ({
+      ...file,
+      url: videoUrl(file.id),
+      filename: file.name,
+      exerciseId: file.id,
+    })));
   });
 
   // Delete a specific video manually
-  server.delete('/videos/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const info = uploadedFiles.get(filename);
-
-    if (!info) {
+  server.delete('/videos/:id', (req, res) => {
+    if (!deleteById(req.params.id)) {
       return res.status(404).json({ error: 'File not found' });
     }
-
-    clearTimeout(info.deleteTimer);
-    const filePath = path.join(videosDir, filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-    uploadedFiles.delete(filename);
-    sendFileList();
-
-    res.json({ deleted: filename });
+    res.json({ deleted: req.params.id });
   });
 
   // Send a native OS notification
@@ -266,27 +367,10 @@ ipcMain.handle('get-server-info', () => {
   };
 });
 
-ipcMain.handle('get-file-list', () => {
-  return Array.from(uploadedFiles.entries()).map(([filename, info]) => ({
-    filename,
-    originalName: info.originalName,
-    uploadedAt: info.uploadedAt,
-    size: info.size,
-  }));
-});
+ipcMain.handle('get-file-list', () => getFileList());
 
-ipcMain.handle('delete-file', (event, filename) => {
-  const info = uploadedFiles.get(filename);
-  if (!info) return { error: 'File not found' };
-
-  clearTimeout(info.deleteTimer);
-  const filePath = path.join(videosDir, filename);
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
-  uploadedFiles.delete(filename);
-  sendFileList();
-  return { deleted: filename };
+ipcMain.handle('delete-file', (event, id) => {
+  return deleteById(id) ? { deleted: id } : { error: 'File not found' };
 });
 
 // ─── App lifecycle ──────────────────────────────────────────

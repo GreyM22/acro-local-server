@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-An Electron desktop app that runs a local HTTP video server during acrobatics competitions. Phones POST video recordings to it; judges GET and stream them back — no cloud upload lag. Videos auto-delete after 10 minutes and are wiped on app exit.
+An Electron desktop app that runs a local HTTP video server during acrobatics competitions. Phones POST video recordings to it; judges GET and stream them back — no cloud upload lag. Videos are kept until manually deleted.
 
 ## Commands
 
@@ -25,9 +25,9 @@ This is a two-process Electron app — the distinction matters when making chang
 
 **Main process (`main.js`)** — runs Node.js, owns all privileged resources (entry point declared in `package.json#main`):
 - Starts an Express HTTP server on `0.0.0.0:3000` (network-wide) on app ready
-- Tracks uploaded files in an in-memory `Map` (`uploadedFiles`) — not persisted to disk
-- Stores video files in `app.getPath('userData')/videos` (OS-specific, survives restarts but the Map doesn't)
-- Schedules auto-deletion with `setTimeout`; clears all timers and files on `window-all-closed`
+- Tracks videos in an in-memory `Map` (`uploadedFiles`): `id` (the exerciseId, unique) → `{ name, uploadedAt, size }`. `name` is the readable filename on disk
+- Stores videos in `~/Desktop/AcroVideos` under their readable name (`Name.mp4`, or `Name (2).mp4` if another id owns that name). `.metadata.json` in that folder persists id → name; `hydrateFromDisk()` rebuilds the Map from it at startup, and unknown video files get id = filename
+- Upload: `POST /upload/:id` (or `POST /upload` with an `id` field), multipart `video` + optional `name`. Same id overwrites. Fetch with `GET /videos/:id`; `DELETE /videos/:id`; `GET /list`
 - Exposes three IPC handlers to the renderer: `get-server-info`, `get-file-list`, `delete-file`
 - Pushes real-time updates to the renderer via `mainWindow.webContents.send('file-list-updated', files)`
 
@@ -41,7 +41,7 @@ This is a two-process Electron app — the distinction matters when making chang
 
 ## Key Constraints
 
-- `SERVER_PORT` (3000) and `AUTO_DELETE_MS` (10 min) are constants at the top of `main.js`
+- `SERVER_PORT` (3000) is a constant at the top of `main.js`
 - Multer accepts only `video/mp4`, `video/quicktime`, `video/webm`, `video/x-msvideo` up to 500 MB
 - The HTTP server returns absolute URLs using the machine's first non-loopback IPv4 address (`getLocalIP()`); if the organizer has multiple network interfaces, this may pick the wrong one
-- File state lives only in the `uploadedFiles` Map — restarting the app loses track of files already on disk (though the files themselves remain until deleted)
+- Names are sanitized before touching disk; request params are never joined into paths (lookups go through the Map)

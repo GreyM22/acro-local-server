@@ -297,6 +297,12 @@
       el.textContent = `${count} device${count !== 1 ? 's' : ''} connected`;
     });
 
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
     // ─── Render file list ────────────────────────
     function renderFiles(files) {
       const container = document.getElementById('fileList');
@@ -323,13 +329,13 @@
           <div class="file-card">
             <div class="file-icon">🎥</div>
             <div class="file-info">
-              <div class="file-name">${file.originalName}</div>
+              <div class="file-name">${escapeHtml(file.name)}</div>
               <div class="file-meta">
                 <span>${sizeMB} MB</span>
                 <span>Uploaded at ${uploadedAt}</span>
               </div>
             </div>
-            <button class="delete-btn" onclick="deleteFile('${file.filename}')" title="Delete now">✕</button>
+            <button class="delete-btn" onclick="deleteFile(this.dataset.id)" data-id="${escapeHtml(file.id)}" title="Delete now">✕</button>
           </div>
         `;
       }).join('');
@@ -345,8 +351,8 @@
     }
 
     // ─── Delete file ─────────────────────────────
-    async function deleteFile(filename) {
-      await window.api.deleteFile(filename);
+    async function deleteFile(id) {
+      await window.api.deleteFile(id);
     }
 
     // ─── Refresh timers every minute ─────────────
